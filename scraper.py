@@ -15,7 +15,7 @@ AJUSTAR si tu flujo cambia:
   tu grabación; si tu menú se ve distinto, corrige los textos abajo.
 """
 
-import os
+import os  #LIBRERIAS IMPORTAR
 import shutil
 import tempfile
 from dataclasses import dataclass, asdict
@@ -24,13 +24,13 @@ from pathlib import Path
 import pandas as pd
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-try:
+try:  #MANEJO DE CREDENCIALES
     import streamlit as st
     _secrets = st.secrets
 except Exception:
     _secrets = {}
 
-
+#busca en los secrets y si no encuentra la clave, busca en variables de entonro normales dels istema (os.getenv)
 def _get_config(key: str, default: str = None) -> str:
     """Busca primero en st.secrets (Streamlit Cloud) y si no, en variables
     de entorno (para correrlo en tu máquina local con un .env)."""
