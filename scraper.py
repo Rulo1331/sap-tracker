@@ -59,29 +59,36 @@ class OrderExportResult:
     screenshot_path: str = ""
 
 
-def _click_visible(page, role: str, name: str, timeout: int = 30000, **kwargs):
-    """Hace clic en el primer elemento VISIBLE que matchee ese rol/nombre.
-
-    SAP WebGUI a veces deja pantallas anteriores 'fantasma' en el HTML al
-    navegar a una nueva (sobre todo al repetir una acción varias veces en
-    un ciclo, como exportar varias SP seguidas). Eso hace que
-    get_by_role(...).click() falle con "strict mode violation" porque
-    encuentra 2+ elementos con el mismo nombre. Esta función filtra y usa
-    solo el que realmente se ve en pantalla en este momento.
-    """
-    locator = page.get_by_role(role, name=name, **kwargs)
+def _get_visible(locator, timeout: int = 30000):
+    """Devuelve el elemento realmente VISIBLE de un locator con varios
+    matches (común en SAP WebGUI cuando quedan pantallas o menús
+    anteriores 'fantasma' en el HTML). Si ninguno pasa el filtro, devuelve
+    el último como mejor esfuerzo. Devuelve None si no hay ningún match."""
     locator.first.wait_for(state="attached", timeout=timeout)
     candidates = locator.all()
     for c in candidates:
         if c.is_visible():
-            c.click()
-            return
-    # Ninguno pasó el filtro de visibilidad (raro) - mejor esfuerzo con el
-    # último, que suele ser el más reciente en el DOM.
-    if candidates:
-        candidates[-1].click()
-    else:
+            return c
+    return candidates[-1] if candidates else None
+
+
+def _click_visible(page, role: str, name: str, timeout: int = 30000, **kwargs):
+    """Hace clic en el elemento VISIBLE que matchee ese rol/nombre (ver
+    _get_visible)."""
+    el = _get_visible(page.get_by_role(role, name=name, **kwargs), timeout)
+    if el is None:
         raise Exception(f"No se encontró ningún elemento {role} con nombre '{name}'")
+    el.click()
+
+
+def _click_visible_text(page, text: str, timeout: int = 30000):
+    """Igual que _click_visible pero buscando por texto en vez de rol
+    (para opciones de menú tipo 'Hoja de cálculo' que no siempre exponen
+    un rol de botón claro)."""
+    el = _get_visible(page.get_by_text(text), timeout)
+    if el is None:
+        raise Exception(f"No se encontró ningún texto visible '{text}'")
+    el.click()
 
 
 def login_and_open_transaction(page):
@@ -111,10 +118,10 @@ def export_order(page, order_number: str, download_dir: Path) -> OrderExportResu
         search_box.press("Enter")
 
         _click_visible(page, "button", "Exportar")
-        page.get_by_text("Hoja de cálculo").last.click()
+        _click_visible_text(page, "Hoja de cálculo")
 
         file_name = f"{order_number}.xlsx"
-        fichero_box = page.get_by_role("textbox", name="Fichero").last
+        fichero_box = _get_visible(page.get_by_role("textbox", name="Fichero"))
         fichero_box.click()
         fichero_box.fill(file_name)
 
@@ -245,17 +252,18 @@ def export_report(page, order_number: str, download_dir: Path) -> OrderExportRes
     """Busca una SP en el Reporte de seguimiento y lo exporta como texto
     con tabuladores (.txt)."""
     try:
-        search_box = page.get_by_role("textbox", name="Solicitud de Pedido")
+        search_box = _get_visible(page.get_by_role("textbox", name="Solicitud de Pedido"))
         search_box.click()
         search_box.fill(order_number)
-        page.get_by_role("button", name="Ejecutar  Resaltado").click()
+        _click_visible(page, "button", "Ejecutar  Resaltado")
+        page.wait_for_load_state("networkidle")
 
-        page.get_by_role("button", name="Local File... (Control+Mayús+").click()
-        page.get_by_role("radio", name="Texto con tabuladores").click()
-        page.get_by_role("button", name="Continuar (Entrada)").click()
+        _click_visible(page, "button", "Local File... (Control+Mayús+")
+        _click_visible(page, "radio", "Texto con tabuladores")
+        _click_visible(page, "button", "Continuar (Entrada)")
 
         file_name = f"{order_number}.txt"
-        fichero_box = page.get_by_role("textbox", name="Fichero")
+        fichero_box = _get_visible(page.get_by_role("textbox", name="Fichero"))
         fichero_box.click()
         fichero_box.fill(file_name)
 
