@@ -127,8 +127,8 @@ def get_multiple_order_exports(order_numbers: list[str]) -> list[OrderExportResu
         download_dir = Path(tmp_dir)
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, accept_downloads=True)
-            context = browser.new_context()
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(accept_downloads=True)
             page = context.new_page()
 
             login_and_open_transaction(page)
