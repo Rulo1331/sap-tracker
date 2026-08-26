@@ -70,6 +70,11 @@ if st.button("🔍 Consultar status", disabled=not order_numbers):
         with st.expander(f"SP {r.order_number}"):
             if r.error:
                 st.error(r.error)
+                if r.screenshot_path:
+                    st.image(
+                        r.screenshot_path,
+                        caption="Así se veía la pantalla de SAP en el momento del error",
+                    )
                 continue
             try:
                 df_detalle = read_exported_order(r.file_path)
