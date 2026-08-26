@@ -56,6 +56,32 @@ class OrderExportResult:
     order_number: str
     file_path: str = ""
     error: str = ""
+    screenshot_path: str = ""
+
+
+def _click_visible(page, role: str, name: str, timeout: int = 30000, **kwargs):
+    """Hace clic en el primer elemento VISIBLE que matchee ese rol/nombre.
+
+    SAP WebGUI a veces deja pantallas anteriores 'fantasma' en el HTML al
+    navegar a una nueva (sobre todo al repetir una acción varias veces en
+    un ciclo, como exportar varias SP seguidas). Eso hace que
+    get_by_role(...).click() falle con "strict mode violation" porque
+    encuentra 2+ elementos con el mismo nombre. Esta función filtra y usa
+    solo el que realmente se ve en pantalla en este momento.
+    """
+    locator = page.get_by_role(role, name=name, **kwargs)
+    locator.first.wait_for(state="attached", timeout=timeout)
+    candidates = locator.all()
+    for c in candidates:
+        if c.is_visible():
+            c.click()
+            return
+    # Ninguno pasó el filtro de visibilidad (raro) - mejor esfuerzo con el
+    # último, que suele ser el más reciente en el DOM.
+    if candidates:
+        candidates[-1].click()
+    else:
+        raise Exception(f"No se encontró ningún elemento {role} con nombre '{name}'")
 
 
 def login_and_open_transaction(page):
@@ -78,22 +104,23 @@ def export_order(page, order_number: str, download_dir: Path) -> OrderExportResu
     """Busca una SP específica y la exporta a Excel, descargando el archivo
     a download_dir. Devuelve la ruta del archivo descargado."""
     try:
-        page.get_by_role("button", name="Otra solicitud de pedido (May").click()
+        _click_visible(page, "button", "Otra solicitud de pedido (May")
         search_box = page.get_by_role("textbox", name="Solicitud de pedido")
         search_box.click()
         search_box.fill(order_number)
         search_box.press("Enter")
 
-        page.get_by_role("button", name="Exportar").click()
-        page.get_by_text("Hoja de cálculo").click()
+        _click_visible(page, "button", "Exportar")
+        page.get_by_text("Hoja de cálculo").last.click()
 
         file_name = f"{order_number}.xlsx"
-        page.get_by_role("textbox", name="Fichero").click()
-        page.get_by_role("textbox", name="Fichero").fill(file_name)
+        fichero_box = page.get_by_role("textbox", name="Fichero").last
+        fichero_box.click()
+        fichero_box.fill(file_name)
 
         with page.expect_download() as download_info:
             with page.expect_popup() as popup_info:
-                page.get_by_role("button", name="OK").click()
+                _click_visible(page, "button", "OK")
             popup = popup_info.value
         download = download_info.value
         popup.close()
@@ -126,23 +153,41 @@ def get_multiple_order_exports(order_numbers: list[str]) -> list[OrderExportResu
     results = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         download_dir = Path(tmp_dir)
+        persistent_dir = Path("descargas_sap")
+        persistent_dir.mkdir(exist_ok=True)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(accept_downloads=True)
             page = context.new_page()
 
-            login_and_open_transaction(page)
+            try:
+                login_and_open_transaction(page)
+            except Exception as e:
+                shot_path = persistent_dir / "error_login.png"
+                page.screenshot(path=str(shot_path), full_page=True)
+                browser.close()
+                return [
+                    OrderExportResult(
+                        order_number="(login/apertura de transacción)",
+                        error=f"No se pudo abrir la transacción: {e}",
+                        screenshot_path=str(shot_path),
+                    )
+                ]
 
             for order in order_numbers:
-                results.append(export_order(page, order, download_dir))
+                result = export_order(page, order, download_dir)
+                if result.error and not result.screenshot_path:
+                    shot_path = persistent_dir / f"error_{order}.png"
+                    try:
+                        page.screenshot(path=str(shot_path), full_page=True)
+                        result.screenshot_path = str(shot_path)
+                    except Exception:
+                        pass
+                results.append(result)
 
             browser.close()
 
-        # Copiamos los archivos fuera del directorio temporal antes de que
-        # se borre, a una carpeta persistente para revisarlos si hace falta.
-        persistent_dir = Path("descargas_sap")
-        persistent_dir.mkdir(exist_ok=True)
         for r in results:
             if r.file_path:
                 new_path = persistent_dir / Path(r.file_path).name
@@ -170,16 +215,30 @@ REPORT_BUTTON_NAME = "Reporte seguimiento de"  # nombre del botón dentro del á
 def login_and_open_report_transaction(page):
     """Login + abrir la transacción 'Reporte de seguimiento'. Se hace UNA
     sola vez por sesión; luego cada SP se consulta reutilizando la misma
-    pantalla (se cambia el número y se vuelve a ejecutar)."""
+    pantalla (se cambia el número y se vuelve a ejecutar).
+
+    Cada paso espera explícitamente a que la pantalla termine de recargar
+    (networkidle) antes de seguir, porque SAP WebGUI recarga la pantalla
+    completa en cada acción (a diferencia de una app moderna que solo
+    actualiza un fragmento) y eso a veces tarda más desde la nube que
+    desde tu red local.
+    """
     page.goto(FIORI_URL)
+    page.wait_for_load_state("networkidle")
 
     page.get_by_role("textbox", name="Usuario Obligatorio").fill(SAP_USER)
     page.get_by_role("textbox", name="Clave de acceso Obligatorio").fill(SAP_PASSWORD)
     page.get_by_role("textbox", name="Clave de acceso Obligatorio").press("Enter")
+    page.wait_for_load_state("networkidle")
 
     page.get_by_title(REPORT_MENU_TITLE).click()
-    page.get_by_role("button", name=REPORT_BUTTON_NAME).click()
+    page.wait_for_load_state("networkidle")
+
+    page.get_by_role("button", name=REPORT_BUTTON_NAME).click(timeout=60000)
+    page.wait_for_load_state("networkidle")
+
     page.get_by_role("button", name="Ejecutar  Resaltado").click()
+    page.wait_for_load_state("networkidle")
 
 
 def export_report(page, order_number: str, download_dir: Path) -> OrderExportResult:
@@ -234,21 +293,45 @@ def get_multiple_report_exports(order_numbers: list[str]) -> list[OrderExportRes
     results = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         download_dir = Path(tmp_dir)
+        persistent_dir = Path("descargas_sap_reporte")
+        persistent_dir.mkdir(exist_ok=True)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(accept_downloads=True)
             page = context.new_page()
 
-            login_and_open_report_transaction(page)
+            try:
+                login_and_open_report_transaction(page)
+            except Exception as e:
+                # No pudimos ni siquiera entrar a la transacción. Guardamos
+                # una captura de pantalla para poder ver qué mostraba SAP
+                # en ese momento, ya que no hay forma de ver el navegador
+                # headless corriendo en la nube.
+                shot_path = persistent_dir / "error_login_reporte.png"
+                page.screenshot(path=str(shot_path), full_page=True)
+                browser.close()
+                return [
+                    OrderExportResult(
+                        order_number="(login/apertura de transacción)",
+                        error=f"No se pudo abrir la transacción de reporte: {e}",
+                        screenshot_path=str(shot_path),
+                    )
+                ]
 
             for order in order_numbers:
-                results.append(export_report(page, order, download_dir))
+                result = export_report(page, order, download_dir)
+                if result.error and not result.screenshot_path:
+                    shot_path = persistent_dir / f"error_{order}.png"
+                    try:
+                        page.screenshot(path=str(shot_path), full_page=True)
+                        result.screenshot_path = str(shot_path)
+                    except Exception:
+                        pass  # si ni la captura funciona, seguimos sin ella
+                results.append(result)
 
             browser.close()
 
-        persistent_dir = Path("descargas_sap_reporte")
-        persistent_dir.mkdir(exist_ok=True)
         for r in results:
             if r.file_path:
                 new_path = persistent_dir / Path(r.file_path).name
