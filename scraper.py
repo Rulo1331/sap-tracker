@@ -16,6 +16,7 @@ AJUSTAR si tu flujo cambia:
 """
 
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -145,7 +146,7 @@ def get_multiple_order_exports(order_numbers: list[str]) -> list[OrderExportResu
         for r in results:
             if r.file_path:
                 new_path = persistent_dir / Path(r.file_path).name
-                Path(r.file_path).rename(new_path)
+                shutil.move(r.file_path, new_path)
                 r.file_path = str(new_path)
 
     return results
