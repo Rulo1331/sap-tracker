@@ -73,6 +73,21 @@ if st.button("🔍 Consultar reporte", disabled=not order_numbers, key="report_b
         with st.expander(f"SP {r.order_number}"):
             if r.error:
                 st.error(r.error)
+                if r.screenshot_path and Path(r.screenshot_path).exists():
+                    st.image(
+                        r.screenshot_path,
+                        caption="Así se veía la pantalla de SAP en el momento del error",
+                    )
+                elif not r.html_path:
+                    st.caption("No se pudo generar ninguna captura de diagnóstico.")
+                if r.html_path and Path(r.html_path).exists():
+                    with open(r.html_path, "rb") as f:
+                        st.download_button(
+                            "⬇️ Descargar HTML de esa pantalla (ábrelo en tu navegador)",
+                            f.read(),
+                            Path(r.html_path).name,
+                            key=f"html_report_{r.order_number}",
+                        )
                 continue
             try:
                 df_detalle = read_report_txt(r.file_path)
