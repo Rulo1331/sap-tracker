@@ -57,6 +57,33 @@ class OrderExportResult:
     file_path: str = ""
     error: str = ""
     screenshot_path: str = ""
+    html_path: str = ""
+
+
+def _capture_diagnostics(page, persistent_dir: Path, label: str) -> tuple[str, str]:
+    """Guarda una captura de pantalla y el HTML de la página en el momento
+    de un error, para poder diagnosticar sin poder ver el navegador
+    headless corriendo en la nube. Cada una se intenta de forma
+    independiente: si la imagen falla (pasa con páginas pesadas con
+    iframes), igual queda el HTML guardado como respaldo."""
+    screenshot_path = ""
+    html_path = ""
+    try:
+        shot = persistent_dir / f"{label}.png"
+        # Sin full_page=True: en pantallas con iframes/dynpros de SAP a
+        # veces falla o se corrompe al medir el alto real de la página.
+        # Una captura del viewport visible es más confiable para diagnóstico.
+        page.screenshot(path=str(shot))
+        screenshot_path = str(shot)
+    except Exception:
+        pass
+    try:
+        html_file = persistent_dir / f"{label}.html"
+        html_file.write_text(page.content(), encoding="utf-8")
+        html_path = str(html_file)
+    except Exception:
+        pass
+    return screenshot_path, html_path
 
 
 def _get_visible(locator, timeout: int = 30000):
@@ -171,26 +198,23 @@ def get_multiple_order_exports(order_numbers: list[str]) -> list[OrderExportResu
             try:
                 login_and_open_transaction(page)
             except Exception as e:
-                shot_path = persistent_dir / "error_login.png"
-                page.screenshot(path=str(shot_path), full_page=True)
+                shot_path, html_path = _capture_diagnostics(page, persistent_dir, "error_login")
                 browser.close()
                 return [
                     OrderExportResult(
                         order_number="(login/apertura de transacción)",
                         error=f"No se pudo abrir la transacción: {e}",
-                        screenshot_path=str(shot_path),
+                        screenshot_path=shot_path,
+                        html_path=html_path,
                     )
                 ]
 
             for order in order_numbers:
                 result = export_order(page, order, download_dir)
                 if result.error and not result.screenshot_path:
-                    shot_path = persistent_dir / f"error_{order}.png"
-                    try:
-                        page.screenshot(path=str(shot_path), full_page=True)
-                        result.screenshot_path = str(shot_path)
-                    except Exception:
-                        pass
+                    shot_path, html_path = _capture_diagnostics(page, persistent_dir, f"error_{order}")
+                    result.screenshot_path = shot_path
+                    result.html_path = html_path
                 results.append(result)
 
             browser.close()
@@ -312,30 +336,25 @@ def get_multiple_report_exports(order_numbers: list[str]) -> list[OrderExportRes
             try:
                 login_and_open_report_transaction(page)
             except Exception as e:
-                # No pudimos ni siquiera entrar a la transacción. Guardamos
-                # una captura de pantalla para poder ver qué mostraba SAP
-                # en ese momento, ya que no hay forma de ver el navegador
-                # headless corriendo en la nube.
-                shot_path = persistent_dir / "error_login_reporte.png"
-                page.screenshot(path=str(shot_path), full_page=True)
+                shot_path, html_path = _capture_diagnostics(
+                    page, persistent_dir, "error_login_reporte"
+                )
                 browser.close()
                 return [
                     OrderExportResult(
                         order_number="(login/apertura de transacción)",
                         error=f"No se pudo abrir la transacción de reporte: {e}",
-                        screenshot_path=str(shot_path),
+                        screenshot_path=shot_path,
+                        html_path=html_path,
                     )
                 ]
 
             for order in order_numbers:
                 result = export_report(page, order, download_dir)
                 if result.error and not result.screenshot_path:
-                    shot_path = persistent_dir / f"error_{order}.png"
-                    try:
-                        page.screenshot(path=str(shot_path), full_page=True)
-                        result.screenshot_path = str(shot_path)
-                    except Exception:
-                        pass  # si ni la captura funciona, seguimos sin ella
+                    shot_path, html_path = _capture_diagnostics(page, persistent_dir, f"error_{order}")
+                    result.screenshot_path = shot_path
+                    result.html_path = html_path
                 results.append(result)
 
             browser.close()
