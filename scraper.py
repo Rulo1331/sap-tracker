@@ -265,6 +265,8 @@ def login_and_open_report_transaction(page):
     page.get_by_title(REPORT_MENU_TITLE).click()
     page.wait_for_load_state("networkidle")
 
+    page.locator(".lsScrollbar--expandSize.lsScrollbar--absolute").click()
+
     page.get_by_role("button", name=REPORT_BUTTON_NAME).click(timeout=60000)
     page.wait_for_load_state("networkidle")
 
