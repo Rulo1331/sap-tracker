@@ -368,3 +368,81 @@ def get_multiple_report_exports(order_numbers: list[str]) -> list[OrderExportRes
                 r.file_path = str(new_path)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Transacción 3: "Reporte seguim. serv. y otros"
+# ---------------------------------------------------------------------------
+
+REPORT3_MENU_TITLE = "Desplegar nodo"
+REPORT3_BUTTON_NAME = "Reporte seguim. serv. y otros"
+
+def login_and_open_report3_transaction(page):
+    """Login + abrir la transacción 'Reporte seguim. serv. y otros'."""
+    page.goto(FIORI_URL)
+    page.wait_for_load_state("networkidle")
+
+    page.get_by_role("textbox", name="Usuario Obligatorio").fill(SAP_USER)
+    page.get_by_role("textbox", name="Clave de acceso Obligatorio").fill(SAP_PASSWORD)
+    page.get_by_role("textbox", name="Clave de acceso Obligatorio").press("Enter")
+    page.wait_for_load_state("networkidle")
+
+    page.get_by_title(REPORT3_MENU_TITLE).click()
+    page.wait_for_load_state("networkidle")
+
+    page.locator(".lsScrollbar--expandSize.lsScrollbar--absolute").click()
+
+    # Se utiliza el nuevo nombre del botón para la tercera transacción
+    page.get_by_role("button", name=REPORT3_BUTTON_NAME).click(timeout=60000)
+    page.wait_for_load_state("networkidle")
+
+    page.get_by_role("button", name="Ejecutar  Resaltado").click()
+    page.wait_for_load_state("networkidle")
+
+def get_multiple_report3_exports(order_numbers: list[str]) -> list[OrderExportResult]:
+    """Exporta múltiples SP usando la tercera transacción."""
+    results = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        download_dir = Path(tmp_dir)
+        persistent_dir = Path("descargas_sap_reporte3")
+        persistent_dir.mkdir(exist_ok=True)
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(accept_downloads=True)
+            page = context.new_page()
+
+            try:
+                login_and_open_report3_transaction(page)
+            except Exception as e:
+                shot_path, html_path = _capture_diagnostics(
+                    page, persistent_dir, "error_login_reporte3"
+                )
+                browser.close()
+                return [
+                    OrderExportResult(
+                        order_number="(login/apertura de transacción)",
+                        error=f"No se pudo abrir la transacción de reporte 3: {e}",
+                        screenshot_path=shot_path,
+                        html_path=html_path,
+                    )
+                ]
+
+            for order in order_numbers:
+                # Se reutiliza la función export_report de la Transacción 2 porque el flujo interno de descarga es idéntico
+                result = export_report(page, order, download_dir)
+                if result.error and not result.screenshot_path:
+                    shot_path, html_path = _capture_diagnostics(page, persistent_dir, f"error_{order}")
+                    result.screenshot_path = shot_path
+                    result.html_path = html_path
+                results.append(result)
+
+            browser.close()
+
+        for r in results:
+            if r.file_path:
+                new_path = persistent_dir / Path(r.file_path).name
+                shutil.move(r.file_path, new_path)
+                r.file_path = str(new_path)
+
+    return results
