@@ -16,6 +16,7 @@ AJUSTAR si tu flujo cambia:
 """
 
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, asdict
@@ -374,6 +375,10 @@ def get_multiple_report_exports(order_numbers: list[str]) -> list[OrderExportRes
 # Transacción 3: "Reporte seguim. serv. y otros"
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Transacción 3: "Reporte seguim. serv. y otros"
+# ---------------------------------------------------------------------------
+
 REPORT3_MENU_TITLE = "Desplegar nodo"
 REPORT3_BUTTON_NAME = "Reporte seguim. serv. y otros"
 
@@ -392,12 +397,49 @@ def login_and_open_report3_transaction(page):
 
     page.locator(".lsScrollbar--expandSize.lsScrollbar--absolute").click()
 
-    # Se utiliza el nuevo nombre del botón para la tercera transacción
     page.get_by_role("button", name=REPORT3_BUTTON_NAME).click(timeout=60000)
     page.wait_for_load_state("networkidle")
 
     page.get_by_role("button", name="Ejecutar  Resaltado").click()
     page.wait_for_load_state("networkidle")
+
+
+def export_report3(page, order_number: str, download_dir: Path) -> OrderExportResult:
+    """Busca una SP en el Reporte 3 y lo exporta usando locators específicos."""
+    try:
+        search_box = _get_visible(page.get_by_role("textbox", name="Solicitud de Pedido"))
+        search_box.click()
+        search_box.fill(order_number)
+        _click_visible(page, "button", "Ejecutar  Resaltado")
+        page.wait_for_load_state("networkidle")
+
+        # AQUÍ USAMOS TUS LOCATORS ESPECÍFICOS PARA LA DESCARGA
+        page.get_by_role("button", name="Fichero local... (Control+May").click()
+        page.locator("div").filter(has_text=re.compile(r"^Texto con tabuladores$")).click()
+        _click_visible(page, "button", "Continuar (Entrada)")
+
+        file_name = f"{order_number}.txt"
+        fichero_box = _get_visible(page.get_by_role("textbox", name="Fichero"))
+        fichero_box.click()
+        fichero_box.fill(file_name)
+
+        with page.expect_download() as download_info:
+            fichero_box.press("Enter")
+        download = download_info.value
+
+        save_path = download_dir / file_name
+        download.save_as(save_path)
+
+        return OrderExportResult(order_number=order_number, file_path=str(save_path))
+
+    except PlaywrightTimeout:
+        return OrderExportResult(
+            order_number=order_number,
+            error="No se encontró la SP o la exportación tardó demasiado",
+        )
+    except Exception as e:
+        return OrderExportResult(order_number=order_number, error=str(e))
+
 
 def get_multiple_report3_exports(order_numbers: list[str]) -> list[OrderExportResult]:
     """Exporta múltiples SP usando la tercera transacción."""
@@ -429,8 +471,8 @@ def get_multiple_report3_exports(order_numbers: list[str]) -> list[OrderExportRe
                 ]
 
             for order in order_numbers:
-                # Se reutiliza la función export_report de la Transacción 2 porque el flujo interno de descarga es idéntico
-                result = export_report(page, order, download_dir)
+                # AHORA LLAMAMOS A export_report3 EN LUGAR DE export_report
+                result = export_report3(page, order, download_dir)
                 if result.error and not result.screenshot_path:
                     shot_path, html_path = _capture_diagnostics(page, persistent_dir, f"error_{order}")
                     result.screenshot_path = shot_path
